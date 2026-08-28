@@ -6,29 +6,6 @@ on:
       - master
 
 jobs:
-  check-changes:
-    runs-on: self-hosted
-    outputs:
-      node: ${{ steps.filter.outputs.node }}
-      java: ${{ steps.filter.outputs.java }}
-      proxy: ${{ steps.filter.outputs.proxy }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Detect changed paths
-        id: filter
-        uses: dorny/paths-filter@v4
-        with:
-          filters: |
-            node:
-              - 'node/**'
-            java:
-              - 'java/**'
-            proxy:
-              - 'nginx/**'
-              - 'docker-compose.yml'
-
   code-scan:
     runs-on: self-hosted
     steps:
@@ -44,18 +21,22 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
   release-java:
-    needs: [check-changes, code-scan]
-    if: needs.check-changes.outputs.java == 'true'
+    needs: code-scan
     runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Build java-app image
-        run: docker compose build java-app
-
-      - name: Deploy java-app
-        run: docker compose up -d java-app
+      - name: Ensure java-app container is up to date
+        run: |
+          if [ "$(docker ps -aq -f name=^java-app$)" ]; then
+            echo "java-app already exists — rebuilding and recreating it with the latest code"
+            docker compose build java-app
+            docker compose up -d java-app
+          else
+            echo "java-app not found — building and creating it for the first time"
+            docker compose up -d --build java-app
+          fi
 
       - name: Verify java-app is up
         run: |
@@ -63,18 +44,22 @@ jobs:
           docker compose exec -T java-app wget -qO- http://localhost:8080/
 
   release-node:
-    needs: [check-changes, code-scan]
-    if: needs.check-changes.outputs.node == 'true'
+    needs: code-scan
     runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Build node-app image
-        run: docker compose build node-app
-
-      - name: Deploy node-app
-        run: docker compose up -d node-app
+      - name: Ensure node-app container is up to date
+        run: |
+          if [ "$(docker ps -aq -f name=^node-app$)" ]; then
+            echo "node-app already exists — rebuilding and recreating it with the latest code"
+            docker compose build node-app
+            docker compose up -d node-app
+          else
+            echo "node-app not found — building and creating it for the first time"
+            docker compose up -d --build node-app
+          fi
 
       - name: Verify node-app is up
         run: |
@@ -82,30 +67,28 @@ jobs:
           docker compose exec -T node-app node -e "require('http').get('http://localhost:3000',r=>process.exit(r.statusCode===200?0:1))"
 
   release-proxy:
-    needs: [check-changes, code-scan]
-    if: needs.check-changes.outputs.proxy == 'true'
+    needs: code-scan
     runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Recreate reverse-proxy with latest config
-        run: docker compose up -d --force-recreate reverse-proxy
+      - name: Ensure reverse-proxy container is up to date
+        run: |
+          if [ "$(docker ps -aq -f name=^reverse-proxy$)" ]; then
+            echo "reverse-proxy already exists — recreating it with the latest config"
+            docker compose up -d --force-recreate reverse-proxy
+          else
+            echo "reverse-proxy not found — creating it for the first time"
+            docker compose up -d reverse-proxy
+          fi
 
   verify-deployment:
     needs: [release-java, release-node, release-proxy]
-    if: |
-      always() &&
-      (needs.release-java.result == 'success' ||
-       needs.release-node.result == 'success' ||
-       needs.release-proxy.result == 'success')
     runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
-      - name: Ensure the full stack is running
-        run: docker compose up -d
 
       - name: Check localhost/java
         run: |
