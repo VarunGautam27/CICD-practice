@@ -1,0 +1,46 @@
+services:
+  java-app:
+    build:
+      context: ./java
+      dockerfile: Dockerfile
+    image: cicd-java-app:latest
+    container_name: java-app
+    restart: unless-stopped
+    expose:
+      - "8080"
+    networks:
+      - labnet
+
+
+  node-app:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    image: cicd-node-app:latest
+    container_name: node-app
+    restart: unless-stopped
+    expose:
+      - "3000"
+    networks:
+      - labnet
+
+  reverse-proxy:
+    image: nginx:1.27-alpine
+    container_name: reverse-proxy
+    restart: unless-stopped
+    volumes: 
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - java-app
+      - node-app
+    networks:
+      - labnet
+
+networks:
+  labnet:
+    driver: bridge
+
+
+      

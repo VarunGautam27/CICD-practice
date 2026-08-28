@@ -1,0 +1,103 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  detect-changes:
+    runs-on: self-hosted
+    outputs:
+      node: ${{ steps.filter.outputs.node }}
+      java: ${{ steps.filter.outputs.java }}
+      proxy: ${{ steps.filter.outputs.proxy }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            node:
+              - 'node/**'
+            java:
+              - 'java/**'
+            proxy:
+              - 'nginx/**'
+              - 'docker-compose.yml'
+
+  deploy-java:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.java == 'true'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build java-app image
+        run: docker compose build java-app
+
+      - name: Deploy java-app
+        run: docker compose up -d java-app
+
+      - name: Verify java-app is up
+        run: |
+          sleep 10
+          docker compose exec -T java-app wget -qO- http://localhost:8080/
+
+  deploy-node:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.node == 'true'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build node-app image
+        run: docker compose build node-app
+
+      - name: Deploy node-app
+        run: docker compose up -d node-app
+
+      - name: Verify node-app is up
+        run: |
+          sleep 5
+          docker compose exec -T node-app node -e "require('http').get('http://localhost:3000',r=>process.exit(r.statusCode===200?0:1))"
+
+  deploy-proxy:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.proxy == 'true'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Recreate reverse-proxy with latest config
+        run: docker compose up -d --force-recreate reverse-proxy
+
+  smoke-test:
+    needs: [deploy-java, deploy-node, deploy-proxy]
+    if: |
+      always() &&
+      (needs.deploy-java.result == 'success' ||
+       needs.deploy-node.result == 'success' ||
+       needs.deploy-proxy.result == 'success')
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Ensure the full stack is running
+        run: docker compose up -d
+
+      - name: Check localhost/java
+        run: |
+          sleep 5
+          curl -fsS http://localhost/java/
+
+      - name: Check localhost/node
+        run: curl -fsS http://localhost/node/
+EOF
