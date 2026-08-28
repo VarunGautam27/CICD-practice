@@ -6,7 +6,7 @@ on:
       - master
 
 jobs:
-  detect-changes:
+  check-changes:
     runs-on: self-hosted
     outputs:
       node: ${{ steps.filter.outputs.node }}
@@ -29,7 +29,7 @@ jobs:
               - 'nginx/**'
               - 'docker-compose.yml'
 
-  sonarqube:
+  code-scan:
     runs-on: self-hosted
     steps:
       - name: Checkout repository
@@ -43,9 +43,9 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-  deploy-java:
-    needs: [detect-changes, sonarqube]
-    if: needs.detect-changes.outputs.java == 'true'
+  release-java:
+    needs: [check-changes, code-scan]
+    if: needs.check-changes.outputs.java == 'true'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
@@ -62,9 +62,9 @@ jobs:
           sleep 10
           docker compose exec -T java-app wget -qO- http://localhost:8080/
 
-  deploy-node:
-    needs: [detect-changes, sonarqube]
-    if: needs.detect-changes.outputs.node == 'true'
+  release-node:
+    needs: [check-changes, code-scan]
+    if: needs.check-changes.outputs.node == 'true'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
@@ -81,9 +81,9 @@ jobs:
           sleep 5
           docker compose exec -T node-app node -e "require('http').get('http://localhost:3000',r=>process.exit(r.statusCode===200?0:1))"
 
-  deploy-proxy:
-    needs: [detect-changes, sonarqube]
-    if: needs.detect-changes.outputs.proxy == 'true'
+  release-proxy:
+    needs: [check-changes, code-scan]
+    if: needs.check-changes.outputs.proxy == 'true'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
@@ -92,13 +92,13 @@ jobs:
       - name: Recreate reverse-proxy with latest config
         run: docker compose up -d --force-recreate reverse-proxy
 
-  smoke-test:
-    needs: [deploy-java, deploy-node, deploy-proxy]
+  verify-deployment:
+    needs: [release-java, release-node, release-proxy]
     if: |
       always() &&
-      (needs.deploy-java.result == 'success' ||
-       needs.deploy-node.result == 'success' ||
-       needs.deploy-proxy.result == 'success')
+      (needs.release-java.result == 'success' ||
+       needs.release-node.result == 'success' ||
+       needs.release-proxy.result == 'success')
     runs-on: self-hosted
     steps:
       - name: Checkout repository
