@@ -6,6 +6,29 @@ on:
       - master
 
 jobs:
+  check-changes:
+    runs-on: self-hosted
+    outputs:
+      node: ${{ steps.filter.outputs.node }}
+      java: ${{ steps.filter.outputs.java }}
+      proxy: ${{ steps.filter.outputs.proxy }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            node:
+              - 'node/**'
+            java:
+              - 'java/**'
+            proxy:
+              - 'nginx/**'
+              - 'docker-compose.yml'
+
   code-scan:
     runs-on: self-hosted
     steps:
@@ -21,7 +44,8 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
   release-java:
-    needs: code-scan
+    needs: [check-changes, code-scan]
+    if: needs.check-changes.outputs.java == 'true'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
@@ -44,7 +68,8 @@ jobs:
           docker compose exec -T java-app wget -qO- http://localhost:8080/
 
   release-node:
-    needs: code-scan
+    needs: [check-changes, code-scan]
+    if: needs.check-changes.outputs.node == 'true'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
@@ -67,7 +92,8 @@ jobs:
           docker compose exec -T node-app node -e "require('http').get('http://localhost:3000',r=>process.exit(r.statusCode===200?0:1))"
 
   release-proxy:
-    needs: code-scan
+    needs: [check-changes, code-scan]
+    if: needs.check-changes.outputs.proxy == 'true'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
@@ -85,6 +111,11 @@ jobs:
 
   verify-deployment:
     needs: [release-java, release-node, release-proxy]
+    if: |
+      always() &&
+      (needs.release-java.result == 'success' ||
+       needs.release-node.result == 'success' ||
+       needs.release-proxy.result == 'success')
     runs-on: self-hosted
     steps:
       - name: Checkout repository
