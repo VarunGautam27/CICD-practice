@@ -41,6 +41,9 @@ services:
 networks:
   labnet:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 10.99.0.0/24
 
 
       
