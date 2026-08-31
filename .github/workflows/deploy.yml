@@ -1,10 +1,8 @@
 name: CI/CD Pipeline
-
 on:
   push:
     branches:
       - master
-
 jobs:
   check-changes:
     runs-on: self-hosted
@@ -15,7 +13,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
       - name: Detect changed paths
         id: filter
         uses: dorny/paths-filter@v4
@@ -29,8 +26,13 @@ jobs:
               - 'nginx/**'
               - 'docker-compose.yml'
 
-  
-
+  code-scan:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
@@ -38,13 +40,12 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
   release-java:
-    needs: [check-changes]
+    needs: [check-changes, code-scan]
     if: needs.check-changes.outputs.java == 'true'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
       - name: Ensure java-app container is up to date
         run: |
           if [ "$(docker ps -aq -f name=^java-app$)" ]; then
@@ -55,20 +56,18 @@ jobs:
             echo "java-app not found — building and creating it for the first time"
             docker compose up -d --build java-app
           fi
-
       - name: Verify java-app is up
         run: |
           sleep 10
           docker compose exec -T java-app wget -qO- http://localhost:8080/
 
   release-node:
-    needs: [check-changes]
+    needs: [check-changes, code-scan]
     if: needs.check-changes.outputs.node == 'true'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
       - name: Ensure node-app container is up to date
         run: |
           if [ "$(docker ps -aq -f name=^node-app$)" ]; then
@@ -79,20 +78,18 @@ jobs:
             echo "node-app not found — building and creating it for the first time"
             docker compose up -d --build node-app
           fi
-
       - name: Verify node-app is up
         run: |
           sleep 5
           docker compose exec -T node-app node -e "require('http').get('http://localhost:3000',r=>process.exit(r.statusCode===200?0:1))"
 
   release-proxy:
-    needs: [check-changes]
+    needs: [check-changes, code-scan]
     if: needs.check-changes.outputs.proxy == 'true'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
       - name: Ensure reverse-proxy container is up to date
         run: |
           if [ "$(docker ps -aq -f name=^reverse-proxy$)" ]; then
@@ -114,11 +111,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
       - name: Check localhost/java
         run: |
           sleep 5
           curl -fsS http://localhost/java/
-
       - name: Check localhost/node
         run: curl -fsS http://localhost/node/
