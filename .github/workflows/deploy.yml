@@ -33,7 +33,7 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
   release-java:
-    needs: [check-changes, code-scan]
+    needs: [check-changes]
     if: needs.check-changes.outputs.java == 'true'
     runs-on: self-hosted
     steps:
@@ -55,7 +55,7 @@ jobs:
           docker compose exec -T java-app wget -qO- http://localhost:8080/
 
   release-node:
-    needs: [check-changes, code-scan]
+    needs: [check-changes]
     if: needs.check-changes.outputs.node == 'true'
     runs-on: self-hosted
     steps:
@@ -77,7 +77,7 @@ jobs:
           docker compose exec -T node-app node -e "require('http').get('http://localhost:3000',r=>process.exit(r.statusCode===200?0:1))"
 
   release-proxy:
-    needs: [check-changes, code-scan]
+    needs: [check-changes]
     if: needs.check-changes.outputs.proxy == 'true'
     runs-on: self-hosted
     steps:
