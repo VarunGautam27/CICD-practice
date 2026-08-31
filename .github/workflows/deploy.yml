@@ -34,7 +34,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: SonarQube Scan
-        uses: sonarqube-scan-action@v8.1.0   # v8.1.0
+        uses: SonarSource/sonarqube-scan-action@v8.1.0   # v8.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
