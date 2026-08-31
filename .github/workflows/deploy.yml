@@ -26,13 +26,6 @@ jobs:
               - 'nginx/**'
               - 'docker-compose.yml'
 
-  code-scan:
-    runs-on: self-hosted
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          fetch-depth: 0
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v8.1.0   # v8.1.0
         env:
