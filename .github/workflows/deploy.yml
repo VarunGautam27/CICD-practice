@@ -1,8 +1,11 @@
 name: CI/CD Pipeline
+
 on:
   push:
     branches:
       - master
+  workflow_dispatch:
+
 jobs:
   check-changes:
     runs-on: self-hosted
@@ -13,6 +16,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Detect changed paths
         id: filter
         uses: dorny/paths-filter@v4
@@ -27,86 +33,85 @@ jobs:
               - 'docker-compose.yml'
 
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995   # v8.1.0
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-  release-java:
+  infra:
     needs: [check-changes]
-    if: needs.check-changes.outputs.java == 'true'
+    runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Terraform init
+        run: |
+          mkdir -p "$HOME/tf-state"
+          terraform init -input=false -backend-config="path=$HOME/tf-state/devops-project.tfstate"
+
+      - name: Terraform format and validate
+        run: |
+          terraform fmt -check -recursive
+          terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve tfplan
+
+  release-java:
+    needs: [check-changes, infra]
+    if: needs.check-changes.outputs.java == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-      - name: Ensure java-app container is up to date
-        run: |
-          if [ "$(docker ps -aq -f name=^java-app$)" ]; then
-            echo "java-app already exists — rebuilding and recreating it with the latest code"
-            docker compose build java-app
-            docker compose up -d java-app
-          else
-            echo "java-app not found — building and creating it for the first time"
-            docker compose up -d --build java-app
-          fi
-      - name: Verify java-app is up
-        run: |
-          sleep 10
-          docker compose exec -T java-app wget -qO- http://localhost:8080/
+
+      - name: Deploy java-app with Ansible
+        run: ansible-playbook -i ansible/inventory.ini ansible/deploy.yml -e service=java-app -e project_dir="$GITHUB_WORKSPACE"
 
   release-node:
-    needs: [check-changes]
-    if: needs.check-changes.outputs.node == 'true'
+    needs: [check-changes, infra]
+    if: needs.check-changes.outputs.node == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-      - name: Ensure node-app container is up to date
-        run: |
-          if [ "$(docker ps -aq -f name=^node-app$)" ]; then
-            echo "node-app already exists — rebuilding and recreating it with the latest code"
-            docker compose build node-app
-            docker compose up -d node-app
-          else
-            echo "node-app not found — building and creating it for the first time"
-            docker compose up -d --build node-app
-          fi
-      - name: Verify node-app is up
-        run: |
-          sleep 5
-          docker compose exec -T node-app node -e "require('http').get('http://localhost:3000',r=>process.exit(r.statusCode===200?0:1))"
+
+      - name: Deploy node-app with Ansible
+        run: ansible-playbook -i ansible/inventory.ini ansible/deploy.yml -e service=node-app -e project_dir="$GITHUB_WORKSPACE"
 
   release-proxy:
-    needs: [check-changes]
-    if: needs.check-changes.outputs.proxy == 'true'
+    needs: [check-changes, infra]
+    if: needs.check-changes.outputs.proxy == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-      - name: Ensure reverse-proxy container is up to date
-        run: |
-          if [ "$(docker ps -aq -f name=^reverse-proxy$)" ]; then
-            echo "reverse-proxy already exists — recreating it with the latest config"
-            docker compose up -d --force-recreate reverse-proxy
-          else
-            echo "reverse-proxy not found — creating it for the first time"
-            docker compose up -d reverse-proxy
-          fi
+
+      - name: Deploy reverse-proxy with Ansible
+        run: ansible-playbook -i ansible/inventory.ini ansible/deploy.yml -e service=reverse-proxy -e project_dir="$GITHUB_WORKSPACE"
 
   verify-deployment:
     needs: [release-java, release-node, release-proxy]
     if: |
       always() &&
+      !contains(needs.*.result, 'failure') &&
       (needs.release-java.result == 'success' ||
        needs.release-node.result == 'success' ||
        needs.release-proxy.result == 'success')
     runs-on: self-hosted
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - name: Check nginx health
+        run: curl -fsS http://localhost/healthz
+
       - name: Check localhost/java
-        run: |
-          sleep 5
-          curl -fsS http://localhost/java/
+        run: curl -fsS http://localhost/java/
+
       - name: Check localhost/node
         run: curl -fsS http://localhost/node/

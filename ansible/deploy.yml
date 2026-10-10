@@ -1,0 +1,66 @@
+- name: Deploy one service of the stack on Kali
+  hosts: kali
+  gather_facts: false
+
+  vars:
+    project_dir: "{{ playbook_dir }}/.."
+    service: ""
+    network_name: labnet
+    allowed_services:
+      - java-app
+      - node-app
+      - reverse-proxy
+    app_health:
+      java-app: "docker compose exec -T java-app wget -qO- http://localhost:8080/"
+      node-app: "docker compose exec -T node-app wget -qO- http://localhost:3000/"
+      reverse-proxy: "curl -fsS http://localhost/healthz"
+
+  tasks:
+    - name: Make sure a valid service was given
+      ansible.builtin.assert:
+        that: service in allowed_services
+        fail_msg: "Pass -e service=java-app, node-app or reverse-proxy"
+
+    - name: Check Docker is running
+      ansible.builtin.command: docker version
+      changed_when: false
+
+    - name: Check the Terraform network exists
+      ansible.builtin.command: docker network inspect {{ network_name }}
+      changed_when: false
+      register: net_check
+      failed_when: net_check.rc != 0
+
+    - name: Build the new image
+      ansible.builtin.command: docker compose build {{ service }}
+      args:
+        chdir: "{{ project_dir }}"
+      when: service != "reverse-proxy"
+      changed_when: true
+
+    - name: Start anything missing and swap in the new image
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: "{{ project_dir }}"
+      changed_when: true
+
+    - name: Recreate nginx so it reads the new config
+      ansible.builtin.command: docker compose up -d --force-recreate --no-deps reverse-proxy
+      args:
+        chdir: "{{ project_dir }}"
+      when: service == "reverse-proxy"
+      changed_when: true
+
+    - name: Wait until the service answers
+      ansible.builtin.command: "{{ app_health[service] }}"
+      args:
+        chdir: "{{ project_dir }}"
+      register: health
+      until: health.rc == 0
+      retries: 15
+      delay: 4
+      changed_when: false
+
+    - name: Show the response
+      ansible.builtin.debug:
+        msg: "{{ service }} says: {{ health.stdout }}"
